@@ -1,5 +1,11 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
-  return <div className="">Hello worlds</div>;
+import SenderForm from "@/components/SenderForm";
+
+export default function Header() {
+  return (
+    <div>
+      <SenderForm />
+    </div>
+  );
 }
