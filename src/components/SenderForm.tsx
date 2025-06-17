@@ -15,6 +15,11 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Card, CardContent } from "@/components/ui/card";
+import { chainsToTSender, erc20Abi, tsenderAbi } from "@/constants";
+import { useAccount, useChainId, useConfig } from "wagmi";
+import { readContract, waitForTransactionReceipt } from "@wagmi/core";
+import { useMemo } from "react";
+import { useWriteContract } from "wagmi";
 
 const formSchema = z.object({
   tokenAddress: z.string().startsWith("0x", "Must start with 0x"),
@@ -22,7 +27,24 @@ const formSchema = z.object({
   amounts: z.string().min(1, "Amounts required"),
 });
 
+function getTotalAmount(input: string): number {
+  // Replace newlines with commas, then split by commas
+  const parts = input.replace(/\n/g, ",").split(",");
+
+  // Convert each part to a number and sum them up
+  const total = parts.reduce((sum, part) => {
+    const num = parseFloat(part.trim());
+    return isNaN(num) ? sum : sum + num;
+  }, 0);
+
+  return total;
+}
+
 export default function SenderForm() {
+  const chainId = useChainId();
+  const config = useConfig();
+  const account = useAccount();
+
   const form = useForm({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -32,10 +54,86 @@ export default function SenderForm() {
     },
   });
 
-  const onSubmit = (values: z.infer<typeof formSchema>) => {
-    console.log(values);
+  const amount = form.watch("amounts");
+  const totalAmount = useMemo(() => getTotalAmount(amount), [amount]);
+  console.log("totalAmount", totalAmount);
+  console.log("biginamount", BigInt(totalAmount));
+  const { writeContractAsync } = useWriteContract();
+
+  const getApprovedAmount = async (
+    tSenderAddress: string | null,
+    tokenAddress: string | null
+  ) => {
+    if (!tSenderAddress || !tokenAddress) {
+      alert("Use supported chain");
+    }
+
+    const response = await readContract(config, {
+      abi: erc20Abi,
+      address: tokenAddress as `0x${string}`,
+      functionName: "allowance",
+      args: [account.address, tSenderAddress as `0x${string}`],
+    });
+    return response as number;
   };
 
+  const onSubmit = async (values: z.infer<typeof formSchema>) => {
+    const tSenderAddress = chainsToTSender[chainId]["tsender"];
+    const approvedAmount = await getApprovedAmount(
+      tSenderAddress,
+      values.tokenAddress.trim()
+    );
+
+    if (approvedAmount < totalAmount) {
+      const approvalHash = await writeContractAsync({
+        abi: erc20Abi,
+        address: values.tokenAddress as `0x${string}`,
+        functionName: "approve",
+        args: [tSenderAddress as `0x${string}`, totalAmount],
+      });
+      const approvalReceipt = await waitForTransactionReceipt(config, {
+        hash: approvalHash,
+      }).catch((err) => {
+        console.log("err", err);
+      });
+      // await writeContractAsync({
+      //   abi: tsenderAbi,
+      //   address: tSenderAddress as `0x${string}`,
+      //   functionName: "airdropERC20",
+      //   args: [
+      //     values.tokenAddress,
+      //     values.recipients
+      //       .split(/[,\n]+/)
+      //       .map((addr) => addr.trim())
+      //       .filter((addr) => addr !== ""),
+      //     values.amounts
+      //       .split(/[,\n]+/)
+      //       .map((amt) => amt.trim())
+      //       .filter((amt) => amt !== ""),
+      //     BigInt(totalAmount),
+      //   ],
+      // });
+    } else {
+      await writeContractAsync({
+        abi: tsenderAbi,
+        address: tSenderAddress as `0x${string}`,
+        functionName: "airdropERC20",
+        args: [
+          values.tokenAddress,
+          values.recipients
+            .split(/[,\n]+/)
+            .map((addr) => addr.trim())
+            .filter((addr) => addr !== ""),
+          values.amounts
+            .split(/[,\n]+/)
+            .map((amt) => amt.trim())
+            .filter((amt) => amt !== ""),
+          BigInt(totalAmount),
+        ],
+      });
+    }
+  };
+  // 0x70997970c51812dc3a010c7d01b50e0d17dc79c8;
   return (
     <main className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
       <Card className="w-full max-w-2xl border-blue-500 border-2 ring-4 ring-blue-500/25">
