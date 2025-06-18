@@ -1,11 +1,6 @@
-"use client";
-
+import Homepage from "@/components/Homepage";
 import SenderForm from "@/components/SenderForm";
 
-export default function Header() {
-  return (
-    <div>
-      <SenderForm />
-    </div>
-  );
+export default function Home() {
+  return <SenderForm />;
 }

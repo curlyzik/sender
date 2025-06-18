@@ -15,9 +15,16 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Card, CardContent } from "@/components/ui/card";
-import { chainsToTSender, erc20Abi, tsenderAbi } from "@/constants";
-import { useAccount, useChainId, useConfig } from "wagmi";
+import { chainsToTSender, tsenderAbi } from "@/constants";
+import {
+  useAccount,
+  useBalance,
+  useChainId,
+  useConfig,
+  useReadContracts,
+} from "wagmi";
 import { readContract, waitForTransactionReceipt } from "@wagmi/core";
+import { erc20Abi, formatUnits } from "viem";
 import { useMemo } from "react";
 import { useWriteContract } from "wagmi";
 
@@ -28,10 +35,7 @@ const formSchema = z.object({
 });
 
 function getTotalAmount(input: string): number {
-  // Replace newlines with commas, then split by commas
   const parts = input.replace(/\n/g, ",").split(",");
-
-  // Convert each part to a number and sum them up
   const total = parts.reduce((sum, part) => {
     const num = parseFloat(part.trim());
     return isNaN(num) ? sum : sum + num;
@@ -55,9 +59,33 @@ export default function SenderForm() {
   });
 
   const amount = form.watch("amounts");
+  const tokenAddress = form.watch("tokenAddress") as `0x${string}`;
+  const { data: tokenDetail } = useReadContracts({
+    contracts: [
+      {
+        address: tokenAddress,
+        functionName: "name",
+        abi: erc20Abi,
+      },
+      {
+        address: tokenAddress,
+        functionName: "balanceOf",
+        abi: erc20Abi,
+        args: [account.address!],
+      },
+      {
+        address: tokenAddress,
+        functionName: "decimals",
+        abi: erc20Abi,
+      },
+    ],
+  });
+  console.log("tokenDetail", tokenDetail);
+  const tokenName = tokenDetail?.[0]?.result;
+  const tokenBalance = tokenDetail?.[1]?.result;
+  const tokenDecimal = tokenDetail?.[2]?.result;
+
   const totalAmount = useMemo(() => getTotalAmount(amount), [amount]);
-  console.log("totalAmount", totalAmount);
-  console.log("biginamount", BigInt(totalAmount));
   const { writeContractAsync } = useWriteContract();
 
   const getApprovedAmount = async (
@@ -67,70 +95,89 @@ export default function SenderForm() {
     if (!tSenderAddress || !tokenAddress) {
       alert("Use supported chain");
     }
+    try {
+      const response = await readContract(config, {
+        abi: erc20Abi,
+        address: tokenAddress as `0x${string}`,
+        functionName: "allowance",
+        args: [account.address!, tSenderAddress as `0x${string}`],
+      });
+      return response;
+    } catch (error) {
+      console.log(error);
+    }
+  };
 
-    const response = await readContract(config, {
-      abi: erc20Abi,
-      address: tokenAddress as `0x${string}`,
-      functionName: "allowance",
-      args: [account.address, tSenderAddress as `0x${string}`],
-    });
-    return response as number;
+  const airdropTsenderToken = async (
+    tSenderAddress: `0x${string}`,
+    tokenAddress: `0x${string}`,
+    recipients: string,
+    amounts: string
+  ) => {
+    await writeContractAsync({
+      abi: tsenderAbi,
+      address: tSenderAddress as `0x${string}`,
+      functionName: "airdropERC20",
+      args: [
+        tokenAddress,
+        recipients
+          .split(/[,\n]+/)
+          .map((addr) => addr.trim())
+          .filter((addr) => addr !== ""),
+        amounts
+          .split(/[,\n]+/)
+          .map((amt) => amt.trim())
+          .filter((amt) => amt !== ""),
+        BigInt(totalAmount),
+      ],
+    })
+      .then()
+      .catch((err) => console.log("err", err));
   };
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
-    const tSenderAddress = chainsToTSender[chainId]["tsender"];
+    const tSenderAddress = chainsToTSender[chainId]["tsender"] as `0x${string}`;
     const approvedAmount = await getApprovedAmount(
       tSenderAddress,
       values.tokenAddress.trim()
     );
 
-    if (approvedAmount < totalAmount) {
-      const approvalHash = await writeContractAsync({
-        abi: erc20Abi,
-        address: values.tokenAddress as `0x${string}`,
-        functionName: "approve",
-        args: [tSenderAddress as `0x${string}`, totalAmount],
-      });
-      const approvalReceipt = await waitForTransactionReceipt(config, {
-        hash: approvalHash,
-      }).catch((err) => {
-        console.log("err", err);
-      });
-      // await writeContractAsync({
-      //   abi: tsenderAbi,
-      //   address: tSenderAddress as `0x${string}`,
-      //   functionName: "airdropERC20",
-      //   args: [
-      //     values.tokenAddress,
-      //     values.recipients
-      //       .split(/[,\n]+/)
-      //       .map((addr) => addr.trim())
-      //       .filter((addr) => addr !== ""),
-      //     values.amounts
-      //       .split(/[,\n]+/)
-      //       .map((amt) => amt.trim())
-      //       .filter((amt) => amt !== ""),
-      //     BigInt(totalAmount),
-      //   ],
-      // });
+    if (approvedAmount! < totalAmount) {
+      let approvalHash: `0x${string}` | null = null;
+      try {
+        approvalHash = await writeContractAsync({
+          abi: erc20Abi,
+          address: values.tokenAddress as `0x${string}`,
+          functionName: "approve",
+          args: [tSenderAddress as `0x${string}`, BigInt(totalAmount)],
+        });
+      } catch (error) {
+        console.log(error);
+      }
+
+      try {
+        await waitForTransactionReceipt(config, {
+          hash: approvalHash!,
+        }).catch((err) => {
+          console.log("err", err);
+        });
+      } catch (error) {
+        console.log(error);
+      }
+
+      airdropTsenderToken(
+        tSenderAddress,
+        values.tokenAddress as `0x${string}`,
+        values.recipients,
+        values.amounts
+      );
     } else {
-      await writeContractAsync({
-        abi: tsenderAbi,
-        address: tSenderAddress as `0x${string}`,
-        functionName: "airdropERC20",
-        args: [
-          values.tokenAddress,
-          values.recipients
-            .split(/[,\n]+/)
-            .map((addr) => addr.trim())
-            .filter((addr) => addr !== ""),
-          values.amounts
-            .split(/[,\n]+/)
-            .map((amt) => amt.trim())
-            .filter((amt) => amt !== ""),
-          BigInt(totalAmount),
-        ],
-      });
+      airdropTsenderToken(
+        tSenderAddress,
+        values.tokenAddress as `0x${string}`,
+        values.recipients,
+        values.amounts
+      );
     }
   };
   // 0x70997970c51812dc3a010c7d01b50e0d17dc79c8;
@@ -204,11 +251,15 @@ export default function SenderForm() {
                     <div>Token name</div>
                     <div>Amount (wei)</div>
                     <div>Amount (tokens)</div>
+                    <div>Account balance</div>
                   </div>
                   <div className="text-right space-y-1 text-sm text-gray-900">
-                    <div>USDC</div>
-                    <div>600</div>
-                    <div>0.0000006</div>
+                    <div>{tokenName ? tokenName : "N/A"}</div>
+                    <div>{totalAmount}</div>
+                    <div>{formatUnits(BigInt(totalAmount), 18)}</div>
+                    {tokenBalance && tokenDecimal && (
+                      <div>{formatUnits(tokenBalance, tokenDecimal)}</div>
+                    )}
                   </div>
                 </div>
               </div>
