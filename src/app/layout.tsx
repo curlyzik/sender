@@ -4,6 +4,7 @@ import "./globals.css";
 import Providers from "./providers";
 import "@rainbow-me/rainbowkit/styles.css";
 import Header from "./Header";
+import { Toaster } from "@/components/ui/sonner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,6 +33,7 @@ export default function RootLayout({
       >
         <Providers>
           <Header />
+          <Toaster position="bottom-right" />
           {children}
         </Providers>
       </body>

@@ -27,6 +27,7 @@ import { readContract, waitForTransactionReceipt } from "@wagmi/core";
 import { erc20Abi, formatUnits } from "viem";
 import { useMemo } from "react";
 import { useWriteContract } from "wagmi";
+import displaySuccessMessage from "@/util/displaySuccessMessage";
 
 const formSchema = z.object({
   tokenAddress: z.string().startsWith("0x", "Must start with 0x"),
@@ -86,7 +87,8 @@ export default function SenderForm() {
   const tokenDecimal = tokenDetail?.[2]?.result;
 
   const totalAmount = useMemo(() => getTotalAmount(amount), [amount]);
-  const { writeContractAsync } = useWriteContract();
+  const { writeContractAsync, isPending: isWriteContractPending } =
+    useWriteContract();
 
   const getApprovedAmount = async (
     tSenderAddress: string | null,
@@ -131,7 +133,13 @@ export default function SenderForm() {
         BigInt(totalAmount),
       ],
     })
-      .then()
+      .then((res) => {
+        displaySuccessMessage(
+          "Transaction successfull",
+          "Token succesfully airdropped"
+        );
+        form.reset();
+      })
       .catch((err) => console.log("err", err));
   };
 
@@ -151,6 +159,7 @@ export default function SenderForm() {
           functionName: "approve",
           args: [tSenderAddress as `0x${string}`, BigInt(totalAmount)],
         });
+        displaySuccessMessage("Amount approved succesffuly");
       } catch (error) {
         console.log(error);
       }
@@ -180,7 +189,36 @@ export default function SenderForm() {
       );
     }
   };
+  const airdropTotalAmount = formatUnits(BigInt(totalAmount), 18);
+  const tokenAccountBalance = formatUnits(
+    BigInt(tokenBalance ?? 0),
+    tokenDecimal ?? 0
+  );
+  const canSendTokens = () => {
+    let data: { message: string; disableBtn: boolean } = {
+      message: "Send tokens",
+      disableBtn: false,
+    };
+    if (Number(airdropTotalAmount) > Number(tokenAccountBalance)) {
+      data = {
+        message: "Total amount should be less than Account balance",
+        disableBtn: true,
+      };
+    }
+    if (isWriteContractPending) {
+      data = {
+        message: "Verifying transaction",
+        disableBtn: true,
+      };
+    }
+
+    return data;
+  };
+
+  const isBtnLoading = canSendTokens();
+
   // 0x70997970c51812dc3a010c7d01b50e0d17dc79c8;
+  // 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
   return (
     <main className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
       <Card className="w-full max-w-2xl border-blue-500 border-2 ring-4 ring-blue-500/25">
@@ -256,16 +294,20 @@ export default function SenderForm() {
                   <div className="text-right space-y-1 text-sm text-gray-900">
                     <div>{tokenName ? tokenName : "N/A"}</div>
                     <div>{totalAmount}</div>
-                    <div>{formatUnits(BigInt(totalAmount), 18)}</div>
+                    <div>{airdropTotalAmount}</div>
                     {tokenBalance && tokenDecimal && (
-                      <div>{formatUnits(tokenBalance, tokenDecimal)}</div>
+                      <div>{tokenAccountBalance}</div>
                     )}
                   </div>
                 </div>
               </div>
 
-              <Button type="submit" className="w-full">
-                Send Tokens
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={isBtnLoading?.disableBtn || !form.formState.isValid}
+              >
+                {isBtnLoading?.message}
               </Button>
             </form>
           </Form>
