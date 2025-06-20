@@ -14,7 +14,7 @@ const Header = () => {
 
       <div className="flex items-center space-x-4">
         <Link
-          href="https://github.com/curlyzik/t-sender"
+          href="https://github.com/curlyzik/sender"
           target="_blank"
           rel="noopener noreferrer"
         >
